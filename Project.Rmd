@@ -1,0 +1,248 @@
+---
+title: "Real Estate Price Prediction"
+author: Mayank Agarwal, Yash Bajaj, Yash Kalyani 
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Introduction
+In this project, we analyse the real estate valuation data. It consists of historical market data of real estate valuation. 
+Using this dataset, we are trying to predict the house price based on several factors. 
+
+
+\newpage
+
+## Exploratory Data Analysis
+
+```{r}
+#Load the necessary libraries 
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+house_data <- read_xlsx("Real_estate_valuation_data_set.xlsx")
+house_data <- house_data[, -1]
+# Giving the column names
+colnames(house_data) <- c("date", "age", "distance", "convenience", "latitude", "longitude", "price")
+getdec <- function(x){
+  x - floor(x)
+}
+month.indx <- round(getdec(house_data$date)*12)
+month.indx[month.indx == 0] <- 12
+#creating the seventh predictor transaction month 
+house_data$month <- month.name[month.indx]
+head(house_data)
+#Looking at the first few rows of the dataset 
+```
+
+# Numerical Summary -
+
+```{r}
+#checking for missing data
+sum(is.na.data.frame(house_data))
+```
+
+```{r}
+house_data$month <- as.factor(house_data$month)
+# gettting numerical summary
+summary(house_data)
+```
+```{r}
+#correlation matrix
+cor(house_data[c("date", "convenience", "price", "age", "distance", "latitude", "longitude")])
+```
+# Graphical Summary - 
+```{r}
+#pairwise plot
+pairs(house_data)
+```
+
+
+We look at the histogram plots of our predictors and make observations. 
+```{r}
+hist(house_data$age, xlab = "Age", main = "Histogram of Age")
+hist(house_data$distance, xlab = "Distance", main = "Histogram of Distance")
+hist(house_data$convenience, xlab = "Convenience", main = "Histogram of Convenience", breaks = seq(-1, 11))
+hist(house_data$latitude, xlab = "Latitude", main = "Histogram of Latitude")
+hist(house_data$longitude, xlab = "Longitude", main = "Histogram of Longitude")
+hist(house_data$price, xlab = "Price", main = "Histogram of Price")
+```
+
+```{r}
+# Avg Price vs Month plot
+plot_data = house_data %>%
+  group_by(month) %>%
+  summarise(mean_price = mean(price))
+barplot(height = plot_data$mean_price, names.arg = plot_data$month, main = "Average Price vs Month", ylim = c(0, 60), xlab = "Month", ylab = "Average Price")
+```
+
+```{r}
+# Scatter plot of predictors vs price
+par(mfrow=c(2,3))
+plot(house_data$age, house_data$price, main="Age vs Price", pch=20, col="red")
+plot(house_data$distance, house_data$price, main="Distance vs Price", pch=20, col="blue")
+plot(house_data$latitude, house_data$price, main="Latitude vs Price", pch=20, col="green")
+plot(house_data$longitude, house_data$price, main="Longitude vs Price", pch=20, col="purple")
+plot(house_data$convenience, house_data$price, main="Convenience vs Price", pch=20, col="black")
+plot(house_data$date, house_data$price, main="Date vs Price", pch=20, col="dark green")
+```
+
+
+
+# Multiple Linear Regression Model -
+
+```{r}
+set.seed(101)  
+sample <- sample.int(n = nrow(house_data), size = floor(.67*nrow(house_data)), replace = FALSE)
+train <- house_data[sample, ]
+test  <- house_data[-sample, ]
+```
+
+```{r}
+library(lmtest)
+library(faraway)
+library(MASS)
+```
+
+Since there is a high correlation between distance and longitude, we remove longitude from our model.
+
+```{r}
+model.linear <- lm(price ~ date + age + distance + convenience + latitude + month, train)
+summary(model.linear)
+```
+We run Backward elimation to drop unnecessary predictors. 
+```{r}
+step(model.linear)
+```
+
+```{r}
+simple.model.linear <- lm(price ~ age + distance + convenience + latitude, train)
+summary(simple.model.linear)
+plot(simple.model.linear, which = 1)
+plot(simple.model.linear, which = 2)
+```
+
+```{r}
+shapiro.test(residuals(simple.model.linear))
+boxcox(simple.model.linear, plotit = T, lambda = seq(-0.5, 0.5, 0.01))
+```
+Shapiro Wilks test rejected Null Hypothesis (normality assumption)
+Hence, using boxcox, we find the required transformation. 
+
+```{r}
+log.model.linear <- lm(log(price) ~ age + distance + convenience + latitude, train)
+summary(log.model.linear)
+plot(log.model.linear, which = 1)
+plot(log.model.linear, which = 2)
+```
+Now we fit the model again after applying the transformation 
+
+
+```{r}
+step(log.model.linear)
+plot(train$age, residuals(log.model.linear)); abline(c(0,0))
+plot(train$distance, residuals(log.model.linear)); abline(c(0,0))
+plot(train$convenience, residuals(log.model.linear)); abline(c(0,0))
+plot(train$latitude, residuals(log.model.linear)); abline(c(0,0))
+```
+We fit a model including higher order polynomial for Distance predictor. 
+```{r}
+poly.loglinear.model <- lm(log(price) ~ age + distance + I(distance^2) +  convenience + latitude, train)
+summary(poly.loglinear.model)
+```
+
+```{r}
+cubic.loglinear.model <- lm(log(price) ~ age + distance + I(distance^2) + I(distance^3) +  convenience + latitude, train)
+summary(cubic.loglinear.model)
+```
+
+```{r}
+biquad.loglinear.model <- lm(log(price) ~ age + distance + I(distance^2) + I(distance^3) + I(distance^4) +  convenience + latitude, train)
+summary(biquad.loglinear.model)
+```
+
+Since the fourth degree is not significant, we choose the cubic model.
+
+```{r}
+n=nrow(train)
+p=length(cubic.loglinear.model$coefficients)
+lev=influence(cubic.loglinear.model)$hat
+lev[lev>2*p/n]
+```
+We look for High leverage points. 
+```{r}
+train[lev > 2*p/n,]
+```
+
+```{r}
+# Outlier t-test
+jack=rstudent(cubic.loglinear.model); 
+qt(.05/(2*n), cubic.loglinear.model$df.residual - 1)
+sort(abs(jack), decreasing=TRUE)[1:5]
+```
+```{r}
+cooks = cooks.distance(cubic.loglinear.model)
+halfnorm(cooks, labs=row.names(train), ylab="Cook's distances")
+```
+We remove the outliers that we have found using Studentized residuals 
+```{r}
+clean_train <- train[-c(90, 170), ]
+clean.cubic.loglinear.model <- lm(log(price) ~ age + distance + I(distance^2) + I(distance^3) +  convenience + latitude, clean_train)
+summary(clean.cubic.loglinear.model)
+```
+
+```{r}
+dwtest(clean.cubic.loglinear.model)
+plot(clean.cubic.loglinear.model, which = 1)
+```
+We run the Durbin Watson test and find that we fail to reject the Null Hypothesis. 
+
+We look at the RMSE on testing data. 
+```{r}
+testX <- test[, -7]
+testY <- log(test$price)
+predY <- predict(clean.cubic.loglinear.model, newdata = testX)
+errors <- predY - testY
+RMSE <- sqrt(mean(errors^2))
+RMSE
+```
+
+# Smoothing Splines Model
+For our second model we are using Smoothing Splines. 
+```{r}
+library(mgcv)
+gamod <- gam(price ~ s(age) + s(distance) + s(latitude) + s(convenience), data=train)
+par(mfrow = c(2,2))
+plot(gamod, residuals = TRUE)
+testX <- test[, -7]
+testY <- test$price
+predY <- predict(gamod, newdata = testX)
+errors <- predY - testY
+RMSE <- sqrt(mean(errors^2))
+RMSE
+```
+
+
+# Random Forest
+The third model we use is a Non-parametric Random Forest model. 
+We train our model with price as the response against the other predictors. 
+We choose 5000 as the number of trees for our model. 
+
+
+```{r}
+library(ranger)
+randomfor.model <- ranger(price ~ ., data = train,
+                       num.trees = 5000, importance = 'impurity')
+randomfor.model$r.squared
+```
+
+```{r}
+testX <- test[, -7]
+testY <- test$price
+predY <- predict(randomfor.model, testX)
+errors <- predY$predictions - testY
+RMSE <- sqrt(mean(errors^2))
+RMSE
+```
